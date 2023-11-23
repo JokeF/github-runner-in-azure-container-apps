@@ -20,10 +20,34 @@
                 "description": "The name of the container app."
             }
         },
+        "containerAppCPU": {
+            "type": "string",
+            "metadata": {
+                "description": "The number of CPU cores."
+            }
+        },
+        "containerAppMemory": {
+            "type": "string",
+            "metadata": {
+                "description": "The number of RAM size in GB."
+            }
+        },
         "containerRegistryName": {
             "type": "string",
             "metadata": {
                 "description": "The name of the container registry."
+            }
+        },
+        "storageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the storage account."
+            }
+        },
+        "storageAccountFileShareName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the storage account file share."
             }
         },
         "containerName": {
@@ -38,22 +62,51 @@
                 "description": "The container image."
             }
         },
-        "githubOwner": {
+        "minimumReplicas": {
+            "type": "int",
+            "metadata": {
+                "description": "The minimum number of replicas."
+            },
+            "defaultValue": 1
+        },
+        "maximumReplicas": {
+            "type": "int",
+            "metadata": {
+                "description": "The maximum number of replicas."
+            },
+            "defaultValue": 30
+        },
+        "revisionSuffix": {
             "type": "string",
             "metadata": {
-                "description": "The name of the GitHub owner."
+                "description": "The revision suffix."
             }
         },
-        "githubRepository": {
-            "type": "string",
-            "metadata": {
-                "description": "The name of the GitHub repository."
-            }
+        "secret1name": {
+            "type": "string"
         },
-        "githubToken": {
-            "type": "securestring",
+        "secret1value": {
+            "type": "string"
+        },
+        "secret2name": {
+            "type": "string"
+        },
+        "secret2value": {
+            "type": "string"
+        },
+        "secret3name": {
+            "type": "string"
+        },
+        "secret3value": {
+            "type": "securestring"
+        },
+        "mountPath": {
+            "type": "string"
+        },
+        "autoscaleRules": {
+            "type": "array",
             "metadata": {
-                "description": "The GitHub token."
+                "description": "The autoscale rules, specific to GH or ADO"
             }
         }
     },
@@ -71,16 +124,37 @@
         {
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
-            "name": "[guid(resourceGroup().id)]",
+            "name": "[guid(resourceGroup().id, parameters('containerRegistryName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+            ],
             "scope": "[resourceId('Microsoft.ContainerRegistry/registries',parameters('containerRegistryName'))]",
             "properties": {
                 "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName')), '2018-11-30').principalId]"
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName')), '2018-11-30').principalId]",
+                "principalType": "ServicePrincipal"
             }
         },
         {
-            "apiVersion": "2022-06-01-preview",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(resourceGroup().id, parameters('storageAccountName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+            ],
+            "scope": "[resourceId('Microsoft.Storage/storageAccounts',parameters('storageAccountName'))]",
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'a7264617-510b-434b-a828-9731dc254ea7')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName')), '2018-11-30').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "apiVersion": "2022-11-01-preview",
             "name": "[parameters('containerAppName')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+            ],
             "type": "Microsoft.App/containerapps",
             "kind": "containerapps",
             "location": "[resourceGroup().location]",
@@ -101,53 +175,68 @@
                     ],
                     "secrets": [
                         {
-                            "name": "gh-owner",
-                            "value": "[parameters('githubOwner')]"
+                            "name": "[toLower(replace(parameters('secret1name'),'_','-'))]",
+                            "value": "[parameters('secret1value')]"
                         },
                         {
-                            "name": "gh-repository",
-                            "value": "[parameters('githubRepository')]"
+                            "name": "[toLower(replace(parameters('secret2name'),'_','-'))]",
+                            "value": "[parameters('secret2value')]"
                         },
                         {
-                            "name": "gh-token",
-                            "value": "[parameters('githubToken')]"
+                            "name": "[toLower(replace(parameters('secret3name'),'_','-'))]",
+                            "value": "[parameters('secret3value')]"
                         }
                     ],
-
                     "activeRevisionsMode": "Single"
                 },
                 "template": {
+                    "revisionSuffix": "[parameters('revisionSuffix')]",
                     "containers": [
                         {
                             "name": "[parameters('containerName')]",
                             "image": "[parameters('containerImage')]",
                             "command": [],
                             "resources": {
-                                "cpu": 1,
-                                "memory": "2Gi"
+                                "cpu": "[parameters('containerAppCPU')]",
+                                "memory": "[parameters('containerAppMemory')]"
                             },
                             "env": [
                                 {
-                                    "name": "GH_OWNER",
-                                    "secretRef": "gh-owner"
+                                    "name": "[parameters('secret1name')]",
+                                    "secretRef": "[toLower(replace(parameters('secret1name'),'_','-'))]"
                                 },
                                 {
-                                    "name": "GH_REPOSITORY",
-                                    "secretRef": "gh-repository"
+                                    "name": "[parameters('secret2name')]",
+                                    "secretRef": "[toLower(replace(parameters('secret2name'),'_','-'))]"
                                 },
                                 {
-                                    "name": "GH_TOKEN",
-                                    "secretRef": "gh-token"
+                                    "name": "[parameters('secret3name')]",
+                                    "secretRef": "[toLower(replace(parameters('secret3name'),'_','-'))]"
                                 }
-                            ]
+                            ],
+                            "volumeMounts": []
                         }
                     ],
                     "scale": {
-                        "minReplicas": 1
-                    }
+                        "minReplicas": "[parameters('minimumReplicas')]",
+                        "maxReplicas": "[parameters('maximumReplicas')]",
+                        "rules": "[parameters('autoscaleRules')]"
+                    },
+                    "volumes": [
+                        {
+                            "name": "azure-files-volume",
+                            "storageName": "[parameters('storageAccountFileShareName')]",
+                            "storageType": "AzureFile"
+                        }
+                    ]                    
                 }
             }
         }
     ],
-    "outputs": {}
+    "outputs": {
+        "containerAppManagedIdentity": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+        }
+    }
 }
